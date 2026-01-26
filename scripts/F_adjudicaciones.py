@@ -10,8 +10,8 @@ df_adjudicaciones = adjudicaciones[['codigoconvocatoria', 'n_item', 'codigoentid
 df_adjudicaciones['cn'] = df_adjudicaciones['codigoconvocatoria'].astype(str) + '-' + df_adjudicaciones['n_item'].astype(str)
 df_adjudicaciones = df_adjudicaciones.set_index('cn')
 df_convocatorias = convocatorias[['codigoconvocatoria', 'n_item', 'departamento_item', 'provincia_item', 'distrito_item', 
-                                  'itemcubso']].drop_duplicates()
+                                  'codigoitem', 'itemcubso']].drop_duplicates()
 df_convocatorias['cn'] = df_convocatorias['codigoconvocatoria'].astype(str) + '-' + df_convocatorias['n_item'].astype(str)
 df_convocatorias = df_convocatorias.drop(columns=['codigoconvocatoria', 'n_item']).set_index('cn')
 
-df_adjudicaciones.join(df_convocatorias, how='left').to_csv('../data/processed/F_adjudicaciones.csv', sep='|', index=True)
+df_adjudicaciones.join(df_convocatorias, how='left').to_csv('../data/processed/F_adjudicaciones.csv', sep='|', index=False)
