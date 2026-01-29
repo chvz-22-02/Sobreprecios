@@ -189,4 +189,4 @@ df = pd.read_pickle('../data/interim/cubso.pickle')
 df.codigo_commodity = df.codigo_commodity.astype(int)
 
 df_items = scrape_items_para_lista_de_commodities(df)
-df_items.to_csv("../data/processed/D_cubso.csv", index=False)
+df_items.to_csv("../data/processed/D_cubso.csv", sep='|', index=False)
