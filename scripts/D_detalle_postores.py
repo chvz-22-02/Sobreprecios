@@ -12,12 +12,13 @@ df_proveedores = df_proveedores.rename(columns={'RUC PROVEEDOR':'RUC_ind',
 df_proveedores = df_proveedores.set_index('RUC')
 df_adjudicaciones = adjudicaciones[['ruc_proveedor', 'tipo_proveedor']].set_index('ruc_proveedor')
 df_consorcio = consorcio[['ruc_consorcio','miembro','ruc_miembro']].set_index('ruc_miembro')
-df_consorcio = df_consorcio.join(df_proveedores, how='left').drop(columns=['RUC_ind'])
-df_consorcio = df_consorcio.reset_index(drop=False).rename(columns={'ruc_miembro':'RUC_ind','ruc_consorcio':'RUC'})
+df_consorcio = df_consorcio.join(df_proveedores, how='left').drop(columns=['RUC_ind']).reset_index(drop=False)
+df_consorcio = df_consorcio.rename(columns={'ruc_miembro':'RUC_ind','ruc_consorcio':'RUC'})
 df_consorcio = df_consorcio.drop(columns=['proveedor_ind']).rename(columns={'miembro':'proveedor_ind'})
 df_consorcio['consorcio_flag'] = 1
 df_proveedores = df_proveedores.reset_index(drop=False)
 df_consorcio = df_consorcio.fillna({'registro':'Sin información', 'departamento':'Sin información', 'provincia':'Sin información', 'distrito':'Sin información'})
-df_consorcio.columns = df_proveedores.columns.tolist()
+df_proveedores = df_proveedores.reindex(sorted(df_proveedores.columns), axis=1) 
+df_consorcio = df_consorcio.reindex(sorted(df_consorcio.columns), axis=1)
 
 pd.concat([df_proveedores, df_consorcio], ignore_index=True).to_csv('../data/processed/D_detalle_postores.csv', sep='|', index=False)

@@ -172,6 +172,9 @@ geo_dept, geo_prov, geo_dist = cargar_geojsons()
 # -----------------------------
 # 4. Estado y utilidades
 # -----------------------------
+if 'metrica_departamento' not in st.session_state: st.session_state.metrica_departamento = []
+if 'metrica_provincia' not in st.session_state: st.session_state.metrica_provincia = []
+if 'metrica_distrito' not in st.session_state: st.session_state.metrica_distrito = []
 if 'selected_dept' not in st.session_state: st.session_state.selected_dept = None
 if 'selected_prov' not in st.session_state: st.session_state.selected_prov = None
 if 'selected_dist' not in st.session_state: st.session_state.selected_dist = None
@@ -220,13 +223,6 @@ def filtrar_por_fecha(df: pd.DataFrame, ini: datetime.date, fin: datetime.date) 
 # -----------------------------
 ini, fin = st.session_state.rango_i, st.session_state.rango_f
 
-# if isinstance(st.session_state.rango, list) and len(st.session_state.rango) == 2:
-#     ini, fin = st.session_state.rango
-#     raise ValueError("flg1")
-# else:
-#     ini = fin = st.session_state.rango  # caso de una sola fecha
-#     raise ValueError(st.session_state.rango)
-
 df_nacional = filtrar_por_fecha(df_F_adjudicaciones, ini, fin)
 
 # Máscara geográfica
@@ -236,6 +232,16 @@ def aplicar_mascara_geo(df: pd.DataFrame):
         rep_geo = rep_geo.query("departamento_item == @st.session_state.selected_dept")
     if st.session_state.selected_prov:
         rep_geo = rep_geo.query("provincia_item == @st.session_state.selected_prov")
+    return rep_geo
+
+def aplicar_mascara_geo_detalle(df: pd.DataFrame):
+    rep_geo = df
+    if st.session_state.metrica_departamento:
+        rep_geo = rep_geo.query("departamento_item == @st.session_state.metrica_departamento")
+    if st.session_state.metrica_provincia:
+        rep_geo = rep_geo.query("provincia_item == @st.session_state.metrica_provincia")
+    if st.session_state.metrica_distrito:
+        rep_geo = rep_geo.query("distrito_item == @st.session_state.metrica_distrito")
     return rep_geo
 
 def aplicar_mascara_cat(df: pd.DataFrame):
@@ -249,11 +255,6 @@ def aplicar_mascara_cat(df: pd.DataFrame):
     if st.session_state.metrica_commodity:
         masc = masc.query("commodity == @st.session_state.metrica_commodity")
     return df[df['codigoitem'].isin(masc['codigo_item'])]
-
-
-# if df_filtrado_cat.empty:
-#     st.warning("No hay datos para esta selección.")
-#     st.stop()
 
 # -----------------------------
 # 7. Breadcrumbs y título
@@ -389,9 +390,12 @@ def cubso_context(df, nivel_cubso):
     #     return df
     df_join = df.set_index('codigoitem').join(df_D_cubso.set_index('codigo_item'), how='left').reset_index()
     df_agrupado_cubso = (df_join.groupby(nivel_cubso, observed=True)
-                .agg(prom_ratio=('ratio', 'mean'))
+    # df_agrupado_cubso = (df_join.groupby(['segmento', 'familia', 'clase', 'commodity'], observed=True)
+                .agg(prom_ratio=('ratio', 'mean'),
+                     codigoitem=('codigoitem', 'first'))
                 .astype({
-                    'prom_ratio': 'float32'
+                    'prom_ratio': 'float32',
+                    'codigoitem': 'object'
                 })  
                 .reset_index())
     return df_agrupado_cubso
@@ -459,18 +463,22 @@ df_agrupado_mapa = (df_filtrado_geo.groupby(nivel_actual, observed=True)
                     })  
                   .reset_index())
 
-df_agrupado_ag_dist = df_agrupado_mapa
-if st.session_state.selected_dist is not None:
-    df_agrupado_ag_dist = (df_filtrado_geo[df_filtrado_geo['distrito_item']==st.session_state.selected_dist].groupby(nivel_actual, observed=True)
-                            .agg(prom_ratio=('ratio', 'mean')
-                                )
-                                .astype({
-                                    'prom_ratio': 'float32'
-                                })  
-                            .reset_index())
+# df_agrupado_ag_dist = df_agrupado_mapa
+# if st.session_state.selected_dist is not None:
+#     df_agrupado_ag_dist = (df_filtrado_geo[df_filtrado_geo['distrito_item']==st.session_state.selected_dist].groupby(nivel_actual, observed=True)
+#                             .agg(prom_ratio=('ratio', 'mean')
+#                                 )
+#                                 .astype({
+#                                     'prom_ratio': 'float32'
+#                                 })  
+#                             .reset_index())
 
 # nivel_cubso = 'segmento'
 # N = 10
+
+# -----------------------------
+# 8. Filtros temáticos
+# -----------------------------
 
 col_mapa, col_barra = st.columns([1, 1])
 
@@ -555,21 +563,72 @@ with col_barra:
             step=1,
             key="filtro_n_form"
         )
-    
-    st.markdown(f"### 📊 Top {filtro_cant} por {nivel_cubso.capitalize()} (Ratio de precios adjudicado sobre referencial)")
 
     df_agrupado_cubso = cubso_context(df_filtrado_geo, nivel_cubso)
+    df_agrupado_cubso = df_agrupado_cubso.set_index('codigoitem').join(df_D_cubso.set_index('codigo_item'), how='left',rsuffix='_right').reset_index()
     df_sorted = df_agrupado_cubso.sort_values('prom_ratio', ascending=False).head(filtro_cant)
+
+    if nivel_cubso == 'segmento':
+        tooltip=[alt.Tooltip(nivel_cubso, title=nivel_cubso.capitalize()),
+                 alt.Tooltip('prom_ratio', format=".2f", title="Ratio promedio")]
+    elif nivel_cubso == 'familia':
+        tooltip=[alt.Tooltip('segmento', title="Segmento"),
+                 alt.Tooltip(nivel_cubso, title=nivel_cubso.capitalize()), 
+                 alt.Tooltip('prom_ratio', format=".2f", title="Ratio promedio")]
+    elif nivel_cubso == 'clase':
+        tooltip=[alt.Tooltip('segmento', title="Segmento"),
+                 alt.Tooltip('familia', title="Familia"),
+                 alt.Tooltip(nivel_cubso, title=nivel_cubso.capitalize()), 
+                 alt.Tooltip('prom_ratio', format=".2f", title="Ratio promedio")]
+    elif nivel_cubso == 'commodity':
+        tooltip=[alt.Tooltip('segmento', title="Segmento"),
+                 alt.Tooltip('familia', title="Familia"),
+                 alt.Tooltip('clase', title="Clase"),
+                 alt.Tooltip(nivel_cubso, title=nivel_cubso.capitalize()), 
+                 alt.Tooltip('prom_ratio', format=".2f", title="Ratio promedio")]
+    st.markdown(f"### 📊 Top {filtro_cant} por {nivel_cubso.capitalize()} (Ratio de precios adjudicado sobre referencial)")
 
     chart = alt.Chart(df_sorted.head(filtro_cant)).mark_bar().encode(
         x=alt.X('prom_ratio', title=""),
         y=alt.Y(nivel_cubso, sort=None, title="", axis=alt.Axis(labelLimit=1000)), 
         color=alt.Color('prom_ratio', scale=alt.Scale(scheme='reds'), legend=None),
-        # tooltip=lista_tooltips # <--- la lista dinámica
-        
-    )
+        tooltip=tooltip)
     st.altair_chart(chart, use_container_width=True)
+df_filtrado_geo_detalle = aplicar_mascara_geo_detalle(df_nacional)
+df_filtrado_cat = aplicar_mascara_cat(df_filtrado_geo_detalle)
 
+df_F_postores_cat = df_F_postores[df_F_postores['codigo_convocatoria'].isin(df_filtrado_cat['codigoconvocatoria'])]
+
+df_agrupado_kpi1 = df_F_postores_cat.groupby(['codigo_convocatoria', 'n_item']).agg(cuenta=('ruc_codigo_postor', 'count'))
+# df_join_kpi2 = df_F_postores.set_index('ruc_codigo_postor').join(df_D_detalle_postores.set_index('RUC'), how='left').reset_index()
+df_join_kpi2 = df_F_postores_cat.merge(
+    df_D_detalle_postores[['RUC', 'consorcio_flag']].drop_duplicates(),
+    left_on='ruc_codigo_postor',
+    right_on='RUC',
+    how='left'
+)
+
+df_join_kpi2.consorcio_flag = df_join_kpi2.consorcio_flag.fillna(0)
+df_join_dd_kpi23 = df_join_kpi2.drop_duplicates(['ruc_proveedor'])
+
+df_F_adjudicaciones_tiempo_kpi4 = df_filtrado_cat.copy()
+df_F_adjudicaciones_tiempo_kpi4['Tiempo'] = df_F_adjudicaciones_tiempo_kpi4['fecha_buenapro'] - df_F_adjudicaciones_tiempo_kpi4['fecha_convocatoria']
+
+# df_F_postores_kpi5 = df_F_postores[['codigo_convocatoria', 'n_item', 'ruc_codigo_postor', 'ganador_flag', 'postor']].copy()
+df_F_postores_kpi5 = df_F_postores_cat[['codigo_convocatoria', 'n_item', 'ruc_codigo_postor', 'ganador_flag', 'postor']].copy()
+df_F_postores_kpi5['key'] = df_F_postores_kpi5['codigo_convocatoria'].astype(str) + '-' + df_F_postores_kpi5['n_item'].astype(str)
+# df_F_adjudicaciones_kpi_5 = df_F_adjudicaciones[['codigoconvocatoria', 'n_item', 'monto_referencial_item_soles', 'monto_adjudicado_item_soles']].copy()
+df_F_adjudicaciones_kpi_5 = df_filtrado_cat.copy()
+df_F_adjudicaciones_kpi_5['key'] = df_F_adjudicaciones_kpi_5['codigoconvocatoria'].astype(str) + '-' + df_F_adjudicaciones_kpi_5['n_item'].astype(str)
+df_join_kpi5 = df_F_adjudicaciones_kpi_5.set_index('key').join(df_F_postores_kpi5.set_index('key'), how='left', lsuffix='_adj').reset_index().set_index('ruc_codigo_postor').join(df_D_detalle_postores.set_index('RUC'), how='left').reset_index(drop=False)
+
+df_ratio_exito = df_join_kpi5.groupby(['proveedor_ind']).agg(cuenta=('ganador_flag', 'mean')).reset_index().sort_values('cuenta', ascending=False)
+
+# with rex:
+
+# -----------------------------
+# 8. Filtros Categorías
+# -----------------------------
 
 segmento, familia, clase, commododity = st.columns([1,1,1,1])
 
@@ -592,9 +651,9 @@ with familia:
     else:
         opciones_familia = [] 
     # seleccion_filtrada = [x for x in seleccion_prev if x in opciones_familia]
-    st.markdown(f"### 🔍 Familia específica")
+    st.markdown(f"### 📋 Familia")
     metrica_familia = st.multiselect(
-        f"Selecciona categorías específicas:",
+        f"Selecciona categorías:",
         options=opciones_familia,
         # default=seleccion_filtrada,
         key="metrica_familia",
@@ -610,9 +669,9 @@ with clase:
     else:
         opciones_clase = [] 
     # seleccion_filtrada = [x for x in seleccion_prev if x in opciones_clase]
-    st.markdown(f"### 🔍 Clase específica")
+    st.markdown(f"### 📋 Clase")
     metrica_clase = st.multiselect(
-        f"Selecciona clases específicas:",
+        f"Selecciona clases:",
         options=opciones_clase,
         # default=seleccion_filtrada,
         key="metrica_clase",
@@ -628,59 +687,237 @@ with commododity:
     else:
         opciones_commodity = [] 
     # seleccion_filtrada = [x for x in seleccion_prev if x in opciones_commodity]
-    st.markdown(f"### 🔍 Commodity específico")
+    st.markdown(f"### 📋 Commodity")
     metrica_commodity = st.multiselect(
-        f"Selecciona commodities específicos:",
+        f"Selecciona commodities:",
         options=opciones_commodity,
         # default=seleccion_filtrada,
         key="metrica_commodity",
         disabled=(len(opciones_commodity) == 0)
     )
 
-df_agrupado_kpi1 = df_F_postores.groupby(['codigo_convocatoria', 'n_item']).agg(cuenta=('ruc_codigo_postor', 'count'))
-df_join_kpi2 = df_F_postores.set_index('ruc_codigo_postor').join(df_D_detalle_postores.set_index('RUC'), how='left').reset_index(drop=False)
+departamento, provincia, distrito = st.columns([1,1,1])
 
-df_join_kpi2.consorcio_flag = df_join_kpi2.consorcio_flag.fillna(0)
-df_join_dd_kpi23 = df_join_kpi2.drop_duplicates(['ruc_proveedor'])
+with departamento:
+    st.markdown("### 🌍 Departamento")
+    metrica_departamento = st.multiselect(
+        "Selecciona  uno o varios departamentos:",
+        options=(
+            df_F_adjudicaciones['departamento_item'].dropna().drop_duplicates().to_list()
+        ),
+        key="metrica_departamento",  # clave en session_state
+    )
+with provincia:
+    # Construye dinámicamente las opciones de 'provincia' según 'departamento'
+    if st.session_state.get("metrica_departamento"):
+        opciones_provincia = (
+            df_F_adjudicaciones[df_F_adjudicaciones['departamento_item'].isin(st.session_state["metrica_departamento"])]
+            ['provincia_item'].dropna().drop_duplicates().to_list()
+        )
+    else:
+        opciones_provincia = [] 
+    # seleccion_filtrada = [x for x in seleccion_prev if x in opciones_provincia]
+    st.markdown(f"### 🌍 Provincia")
+    metrica_provincia = st.multiselect(
+        f"Selecciona provincias:",
+        options=opciones_provincia,
+        # default=seleccion_filtrada,
+        key="metrica_provincia",
+        disabled=(len(opciones_provincia) == 0)
+    )
+with distrito:
+    # Construye dinámicamente las opciones de 'distrito' según 'provincia'
+    if st.session_state.get("metrica_provincia"):
+        opciones_distrito = (
+            df_F_adjudicaciones[(df_F_adjudicaciones['provincia_item'].isin(st.session_state["metrica_provincia"])) & (df_F_adjudicaciones['departamento_item'].isin(st.session_state["metrica_departamento"]))]
+            ['distrito_item'].dropna().drop_duplicates().to_list()
+        )
+    else:
+        opciones_distrito = [] 
+    # seleccion_filtrada = [x for x in seleccion_prev if x in opciones_distrito]
+    st.markdown(f"### 🌍 Distrito")
+    metrica_distrito = st.multiselect(
+        f"Selecciona distritos:",
+        options=opciones_distrito,
+        # default=seleccion_filtrada,
+        key="metrica_distrito",
+        disabled=(len(opciones_distrito) == 0)
+    )
+    
+# -----------------------------
+# 8. Serie de tiempo
+# -----------------------------
 
-df_F_adjudicaciones_tiempo_kpi4 = df_filtrado_geo.copy()
-df_F_adjudicaciones_tiempo_kpi4['Tiempo'] = df_F_adjudicaciones_tiempo_kpi4['fecha_buenapro'] - df_F_adjudicaciones_tiempo_kpi4['fecha_convocatoria']
+df_agrupado_st = df_filtrado_cat.groupby(['fecha_convocatoria']).agg(prom_ratio=('ratio', 'mean')).astype({'prom_ratio': 'float32'})
 
-ruc = '20108983583' # RUC de ejemplo, cambiar por el que se quiera analizar
-df_F_postores_kpi5 = df_F_postores.copy()
-df_F_postores_kpi5['key'] = df_F_postores_kpi5['codigo_convocatoria'].astype(str) + '-' + df_F_postores_kpi5['n_item'].astype(str)
-df_F_adjudicaciones_kpi_5 = df_F_adjudicaciones.copy()
-df_F_adjudicaciones_kpi_5['key'] = df_F_adjudicaciones_kpi_5['codigoconvocatoria'].astype(str) + '-' + df_F_adjudicaciones_kpi_5['n_item'].astype(str)
-df_join_kpi5 = df_F_adjudicaciones_kpi_5.set_index('key').join(df_F_postores_kpi5.set_index('key'), how='left', lsuffix='_adj').reset_index(drop=False)
-df_join_g_kpi5 = df_join_kpi5[df_join_kpi5['ruc_codigo_postor']==ruc] # Cambiar el filtro por el filtro de un ruc
-df_join_ng_kpi5 = df_join_kpi5[df_join_kpi5['ruc_codigo_postor']!=ruc] # Cambiar el filtro por el filtro de un ruc
+ini_dt, fin_dt = df_agrupado_st.index.min(), df_agrupado_st.index.max()
+
+cont_st, = st.columns([1])
+with cont_st:
+    fig = px.line(df_agrupado_st, x=df_agrupado_st.index, y='prom_ratio', labels={'prom_ratio': 'Ratio promedio', 'fecha_convocatoria': 'Fecha'})
+    fig.update_xaxes(
+        range=[pd.to_datetime(ini_dt), pd.to_datetime(fin_dt)],
+        rangeslider=dict(visible=True),
+        rangeselector=dict(
+            buttons=[
+                dict(count=1, label="1m", step="month", stepmode="backward"),
+                dict(count=3, label="3m", step="month", stepmode="backward"),
+                dict(count=6, label="6m", step="month", stepmode="backward"),
+                dict(count=1, label="1y", step="year", stepmode="backward"),
+                dict(step="all")
+            ]
+        )
+    )
+    fig.update_layout(hovermode='x unified')
+    fig.update_traces(line=dict(color="#F17A19"))
+    st.plotly_chart(fig, use_container_width=True)
+
 pxc, cxp, cxa, tpbp = st.columns([1, 1, 1, 1])
 with pxc:
-    st.markdown("### 📈 Precio por CUBSO")
-    st.metric('kpi 1 | Cantidad promedio de postores por convocatoria:',df_agrupado_kpi1['cuenta'].mean())
+    st.markdown("### 📈 Promedio de postores por convocatoria:")
+    st.metric('',f"{df_agrupado_kpi1['cuenta'].mean():,.2f}")
     
 with cxp:
-    st.markdown("### 📈 Precio por CUBSO")
-    st.metric('kpi 2 | cantidad de consorcios por postores concursantes:', df_join_dd_kpi23.consorcio_flag.mean())
+    st.markdown("### 📈 Tasa de consorcios por postores concursantes:")
+    st.metric('', f"{df_join_dd_kpi23.consorcio_flag.mean():.2%}")
 
 with cxa:
-    st.markdown("### 📈 Precio por CUBSO")
-    st.metric('kpi 3 | cantidad de consorcios por adjudicados:', df_join_dd_kpi23[df_join_dd_kpi23['ganador_flag']==1].consorcio_flag.mean())
+    st.markdown("### 📈 Tasa de consorcios por adjudicados:")
+    st.metric('', f"{df_join_dd_kpi23[df_join_dd_kpi23['ganador_flag']==1].consorcio_flag.mean():.2%}")
 with tpbp:
-    st.markdown("### 📈 Precio por CUBSO")
-    st.metric('kpi 4 | promedio de días de adjudicación:', df_F_adjudicaciones_tiempo_kpi4.Tiempo.mean())
+    st.markdown("### 📈 Promedio de días de adjudicación:")
+    st.metric('', df_F_adjudicaciones_tiempo_kpi4.Tiempo.mean().days)
 
-popr, popref, cec, rex = st.columns([1, 1, 1, 1]) 
-with popr:
-    st.markdown("### 📈 Precio por CUBSO")
-    st.metric('kpi 5 | promedio de oferta propia contra otros', df_agrupado.diferencia_otros.mean())
-    
-with popref:
-    st.markdown("### 📈 Precio por CUBSO")
-    st.metric('kpi 6 | cantidad de consorcios por postores concursantes:', df_join_dd.consorcio_flag.mean())
-with cec:
-    st.markdown("### 📈 Precio por CUBSO")
-    st.metric('kpi 7 | cuenta de postores coincidentes:',len(df_F_postores_agg[df_F_postores_agg['cuenta']/df_F_postores_agg['cuenta'].max()>umbral])-1,'(con umbral',f'{umbral})')
-with rex:
-    st.markdown("### 📈 Precio por CUBSO")
-    st.metric('kpi 8 | ratio de éxito:', df_F_postores_seleccionado.ganador_flag.mean())
+filtro_cant_re = st.number_input(
+    "Registros a mostrar:",
+    min_value=0,
+    max_value=100,
+    value=10,
+    step=1,
+    key="filtro_n_form_re"
+)
+df_ratio_exito = df_ratio_exito.head(st.session_state.filtro_n_form_re)
+st.markdown(f"### 📈 Ratios de éxito del mercado (Top {st.session_state.filtro_n_form_re})")
+chart = alt.Chart(df_ratio_exito).mark_bar().encode(
+    x=alt.X('cuenta', title="Ratio de éxito"),
+    y=alt.Y('proveedor_ind', sort=None, title="RUC"), 
+    color=alt.Color('cuenta', scale=alt.Scale(scheme='reds'), legend=None),
+    tooltip=[alt.Tooltip('cuenta', title="Ratio de éxito"), alt.Tooltip('proveedor_ind', title="Postor")])
+st.altair_chart(chart, use_container_width=True)
+
+# Precalcular el diccionario de RUC -> nombre de postor
+ruc_to_postor = (
+    df_join_kpi5.groupby("RUC_ind")["proveedor_ind"]
+    .first()  # o el criterio que prefieras
+    .str.capitalize()
+    .to_dict()
+)
+
+ruc_coincidencia = st.selectbox(
+    "Selecciona un RUC para ver sus coincidencias:",
+    options=list(ruc_to_postor.keys()),
+    index=0,
+    key="ruc_coincidencia",
+    format_func=lambda x: str(ruc_to_postor.get(x, x))  # siempre string
+)
+
+
+# cec, rex = st.columns([1, 1]) 
+# with cec:
+#     st.markdown(f"### 📈 Postores coincidentes con {ruc}")
+#     # Construir la pivot table con groupby + unstack
+#     st.dataframe(tabla_styled, use_container_width=True)
+
+df_join_g_kpi5 = df_join_kpi5.query("RUC_ind == @st.session_state.ruc_coincidencia")
+df_join_ng_kpi5 = df_join_kpi5.query("RUC_ind != @st.session_state.ruc_coincidencia")
+df_join_join_kpi5 = df_join_g_kpi5.set_index('key').join(df_join_ng_kpi5.set_index('key'), lsuffix='_g', rsuffix='_ng').reset_index()
+df_agrupado_kpi5 = df_join_join_kpi5.groupby(['key']).agg(monto_g=('monto_referencial_item_soles_g','mean'),
+                                              monto_adj_g=('monto_adjudicado_item_soles_g','mean'), # Validar el nombre para los montos ofertados pero no ganadores
+                                              monto_adj_ng=('monto_adjudicado_item_soles_ng','mean'))
+df_agrupado_kpi5['diferencia_referencial'] = df_agrupado_kpi5['monto_adj_g'] / df_agrupado_kpi5['monto_g']
+df_agrupado_kpi5['diferencia_otros'] = df_agrupado_kpi5['monto_adj_g'] / df_agrupado_kpi5['monto_adj_ng']
+
+kpis, coincidentes = st.columns([1, 1])
+with kpis:
+    st.markdown("### 📈 Promedio de oferta propia contra otros:")
+    st.metric('', f"{df_agrupado_kpi5.diferencia_otros.mean():.2f}") # depende ruc
+    st.markdown("### 📈 Promedio de oferta propia contra referencial:")
+    st.metric('', f"{df_agrupado_kpi5.diferencia_referencial.mean():.2f}") # depende ruc
+
+with coincidentes:
+    st.markdown(f"### 📈 Postores coincidentes con {df_F_postores[df_F_postores['ruc_codigo_postor']==st.session_state.ruc_coincidencia].iloc[0, 4]} ({ruc_coincidencia})")
+    # Construir la pivot table con groupby + unstack
+
+    # df_F_postores_ci_seleccionado_kpi7 = df_F_postores_kpi5[df_F_postores_kpi5['key'].isin(df_join_g_kpi5['key'])] # df_join_kpi5
+    df_F_postores_ci_seleccionado_kpi7 = df_join_kpi5[df_join_kpi5['key'].isin(df_join_g_kpi5['key'])]
+    # df_F_postores_agg_kpi7 = df_F_postores_ci_seleccionado_kpi7.groupby('ruc_codigo_postor').agg(cuenta=('ruc_codigo_postor', 'count'))
+    pt = (
+        df_F_postores_ci_seleccionado_kpi7
+        # .groupby(["postor", "key"])
+        .groupby(["proveedor_ind", "key"])
+        .size()
+        .unstack(fill_value=0)
+    )
+
+    # Función para aplicar estilo: pintar valores > 0
+    def highlight_nonzero(val):
+        color = 'background-color: lightgreen' if val != 0 else ''
+        return color
+
+    # Aplicar el estilo
+    tabla_styled = pt.style.applymap(highlight_nonzero)
+    st.dataframe(tabla_styled, use_container_width=True)
+
+df_display = df_join_join_kpi5.drop(
+    columns=['key', 'codigo_convocatoria_g', 'n_item_g', 'n_item_adj_ng', 'monto_referencial_item_soles_ng', 'monto_adjudicado_item_soles_ng', 'codigo_convocatoria_ng', 'n_item_ng',
+             'ratio_g', 'estado_item_g', 'ruc_proveedor_g', 'codigoentidad_ng', 'objetocontractual_ng', 'tipoprocesoseleccion_ng', 
+             'proceso_ng', 'descripcion_proceso_ng', 'unidad_medida_ng', 'cantidad_adjudicado_item_ng', 'estado_item_ng', 'descripcion_item_ng', 'fecha_convocatoria_ng', 
+             'fecha_buenapro_ng', 'fecha_consentimiento_bp_ng', 'departamento_item_ng', 'provincia_item_ng', 'distrito_item_ng', 'codigoitem_ng', 'itemcubso_ng', 'ratio_ng', 
+             'ruc_proveedor_ng', 'itemcubso_g', 'codigoconvocatoria_ng']).rename(
+    columns={'codigoconvocatoria_g': 'codigoconvocatoria', 
+             'n_item_adj_g': 'n_item', 
+             'codigoentidad_g': 'CODCONSUCODE',
+             'objetocontractual_g': 'objetocontractual',
+             'tipoprocesoseleccion_g': 'tipoprocesoseleccion',
+             'proceso_g': 'proceso',
+             'descripcion_proceso_g': 'descripcion_proceso',
+             'unidad_medida_g': 'unidad_medida',
+             'descripcion_item_g': 'descripcion_item',
+             'fecha_convocatoria_g': 'fecha_convocatoria',
+             'fecha_buenapro_g': 'fecha_buenapro',
+             'fecha_consentimiento_bp_g': 'fecha_consentimiento_bp',
+             'departamento_item_g': 'departamento_item',
+             'provincia_item_g': 'provincia_item',
+             'distrito_item_g': 'distrito_item',
+             'codigoitem_g': 'codigoitem',
+             'cantidad_adjudicado_item_g': 'cantidad_adjudicado_item',
+             'monto_referencial_item_soles_g': 'monto_referencial_item_soles', 
+             'ruc_codigo_postor_g': 'ruc_codigo_postor_seleccionado',
+             'postor_g': 'postor_seleccionado',
+             'monto_adjudicado_item_soles_g': 'monto_postor_seleccionado', 
+             'ganador_flag_g': 'ganador_flag_seleccionado',
+             'ruc_codigo_postor_ng': 'ruc_codigo_postor_no_seleccionado',
+             'postor_ng': 'postor_no_seleccionado',
+             'monto_adjudicado_item_soles_ng': 'monto_postor_no_seleccionado',
+             'ganador_flag_ng': 'ganador_flag_no_seleccionado'
+             })
+df_display['CODCONSUCODE'] = df_display['CODCONSUCODE'].astype(int)
+df_display = df_display.set_index('CODCONSUCODE').join(df_D_entidades.set_index('CODCONSUCODE').rename(columns={'RUC': 'ruc_entidad','DEPARTAMENTO': 'departamento_entidad', 'PROVINCIA': 'provincia_entidad', 'DISTRITO': 'distrito_entidad'}), how='left', rsuffix='_entidad').reset_index(drop=False).set_index('codigoitem').join(df_D_cubso.set_index('codigo_item'), how='left').reset_index(drop=False)
+
+df_display = df_display[['codigoconvocatoria', 'n_item',
+                            'objetocontractual', 'tipoprocesoseleccion', 'proceso',
+                            'descripcion_proceso', 'unidad_medida', 'cantidad_adjudicado_item',
+                            'descripcion_item', 'fecha_convocatoria', 'fecha_buenapro',
+                            'fecha_consentimiento_bp', 'departamento_item', 'provincia_item',
+                            'distrito_item', 'ruc_entidad', 'CODCONSUCODE', 'NOMBRE_DE_ENTIDAD',
+                            'departamento_entidad', 'provincia_entidad', 'distrito_entidad', 'tipoentidad',
+                            'codigo_segmento', 'segmento', 'codigo_familia', 'familia',
+                            'codigo_clase', 'clase', 'codigo_commodity', 'commodity', 'item',
+                            'codigo_cubso','codigoitem', 'monto_referencial_item_soles',
+                            'monto_postor_seleccionado', 'ruc_codigo_postor_seleccionado',
+                            'postor_seleccionado', 'ganador_flag_seleccionado',
+                            'ruc_codigo_postor_no_seleccionado', 'postor_no_seleccionado',
+                            'ganador_flag_no_seleccionado']]
+
+st.markdown(f"### 📈 Base de procesos (primeros 500 registros)")
+st.dataframe(df_display.head(500), use_container_width=True)
